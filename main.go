@@ -7,11 +7,39 @@ import (
 	"net/http"
 	"time"
 
+	"context"
+	"os"
+
+	"github.com/Shannon-Reed/SIP-Routing-Flow/internal/database"
 	"github.com/Shannon-Reed/SIP-Routing-Flow/internal/routing"
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	router := routing.NewRouter()
+	// Load environment variables from .env
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using system environment")
+	}
+
+	// Retrieve database connection string
+	databaseURL := os.Getenv("DATABASE_URL")
+
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL environment variable is missing")
+	}
+
+	// Connect to Neon PostgreSQL
+	db, err := database.Connect(context.Background(), databaseURL)
+
+	if err != nil {
+		log.Fatalf("Database connection failed: %v", err)
+	}
+
+	defer db.Close()
+
+	log.Println("Successfully connected to Neon PostgreSQL")
+
+	router := routing.NewRouter(db)
 	mux := http.NewServeMux()
 
 	// Health check
@@ -56,7 +84,9 @@ func main() {
 			return
 		}
 
-		response, err := router.FindRoute(call)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		response, err := router.FindRoute(ctx, call)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
