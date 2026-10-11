@@ -1,0 +1,83 @@
+package main
+
+import (
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/Shannon-Reed/SIP-Routing-Flow/internal/routing"
+)
+
+func main() {
+	router := routing.NewRouter()
+	mux := http.NewServeMux()
+
+	// Health check
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "healthy",
+			"service": "sip-routing-flow",
+		})
+	})
+
+	// SIP routing endpoint
+	mux.HandleFunc("/route", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var call routing.CallRequest
+
+		decoder := json.NewDecoder(
+			http.MaxBytesReader(w, r.Body, 1<<20),
+		)
+		decoder.DisallowUnknownFields()
+
+		if err := decoder.Decode(&call); err != nil {
+			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+
+		// Reject trailing JSON values.
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			http.Error(w, "Expected a single JSON object", http.StatusBadRequest)
+			return
+		}
+
+		response, err := router.FindRoute(call)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("Failed to encode response: %v", err)
+			return
+		}
+
+		log.Printf("Call %s routed to %s", call.CallID, response.Route)
+	})
+
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Println("SIP Routing Flow API listening on :8080")
+	log.Fatal(server.ListenAndServe())
+}
