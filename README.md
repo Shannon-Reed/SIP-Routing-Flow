@@ -1,197 +1,90 @@
 # SIP Routing Flow
 
-**A Go-based telecommunications routing API with dynamic SIP gateway selection, cloud-hosted PostgreSQL configuration, and persistent routing history.**
+**A cloud-deployed, database-driven SIP routing decision API with a separate Python analytics service.**
 
-SIP Routing Flow is a backend development project that simulates the routing decision layer of a Voice over IP (VoIP) telecommunications system. It provides a REST API for processing incoming call-routing requests, selecting configured SIP destinations, and recording routing decisions in a cloud-hosted PostgreSQL database.
+SIP Routing Flow is a backend engineering project inspired by telecommunications call-routing systems. A Go REST API selects a configured SIP destination based on a requested region, applies a default fallback when needed, and records routing decisions in PostgreSQL. A separate Python FastAPI service queries those records to provide operational analytics.
 
-The project explores backend service architecture, database-driven routing, connection pooling, error handling, automated testing, and cloud integration using Go.
+Both applications are containerized with Docker and have been deployed together as an AWS ECS Fargate task. Their HTTP health endpoints, analytics/database connectivity, and ECS container health checks have been verified in AWS.
 
-> **Project scope:** This application is a SIP routing decision service, not a SIP proxy or PBX. It selects SIP destination URIs but does not currently process SIP signaling, establish voice sessions, or verify call completion.
+> **Scope:** This is a routing **decision** service, not a SIP proxy or PBX. It returns SIP destination URIs; it does not exchange SIP signaling, establish voice sessions, or confirm call completion.
 
-## Technology Stack
+## At a glance
 
-| Technology | Purpose |
-|---|---|
-| Go | Core backend application and routing logic |
-| Go `net/http` | REST API implementation |
-| PostgreSQL | Routing configuration and persistent call records |
-| Neon | Managed, cloud-hosted PostgreSQL |
-| pgx/v5 | PostgreSQL driver and connection pooling |
-| godotenv | Local environment configuration |
-| Go testing package | Automated unit testing |
-| Git / GitHub | Version control and source management |
+| Component | Technology | Responsibility |
+| --- | --- | --- |
+| Routing API | Go, `net/http`, `pgx/v5` | Validate requests, select SIP destinations, persist decisions |
+| Analytics API | Python, FastAPI | Summarize routing history from PostgreSQL |
+| Database | Neon PostgreSQL | Store routing configuration and call records |
+| Local environment | Docker, Docker Compose | Run both services together |
+| Cloud deployment | AWS ECS Fargate (Linux/ARM64), Amazon ECR | Run container images in AWS |
+| Operations | AWS Secrets Manager, CloudWatch Logs, IAM, ECS Exec | Manage credentials, inspect logs, securely troubleshoot |
 
 ## Features
 
-### Dynamic SIP Gateway Routing
+- **Database-driven routing:** Select SIP destinations from PostgreSQL rather than hardcoded configuration.
+- **Region matching and fallback:** Match regions case-insensitively and use an enabled `DEFAULT` route when an exact match is unavailable.
+- **Configurable route availability:** Enable or disable routing entries in the database.
+- **Persistent routing history:** Record call identifiers, caller and destination, region, selected SIP URI, status, and timestamp.
+- **Analytics service:** Retrieve aggregate summaries, region-level statistics, and recent routing activity through a separate Python API.
+- **Operational checks:** Expose HTTP health endpoints for both services; configure ECS container health checks and CloudWatch logging.
+- **Cloud secrets management:** Inject the PostgreSQL connection string into Fargate containers using AWS Secrets Manager rather than embedding it in container images.
+- **Automated tests:** Include Go and Python tests for application behavior.
 
-The application accepts call-routing requests and selects an appropriate SIP destination based on the requested geographic region.
-
-Routing rules are stored in PostgreSQL rather than hardcoded in the application, allowing administrators to modify destinations without rebuilding or restarting the Go service.
-
-Current routing behavior includes:
-
-- Region-based SIP destination selection.
-- Configurable fallback routing for unsupported regions.
-- Ability to enable or disable routing entries.
-- Case-insensitive region matching.
-- Request validation and structured error handling.
-
-### Cloud-Hosted PostgreSQL Integration
-
-The application connects to a managed Neon PostgreSQL database using the `pgx` driver.
-
-Database connectivity includes:
-
-- Connection pooling to reuse PostgreSQL connections.
-- TLS-enabled connections through the configured database URL.
-- Startup connectivity verification.
-- Context-based query timeouts.
-- Parameterized SQL queries.
-
-### Persistent Routing History
-
-Each valid request that produces a routing decision is recorded in PostgreSQL.
-
-Stored information includes:
-
-- Call identifier.
-- Originating caller number.
-- Destination number.
-- Requested region.
-- Selected SIP gateway.
-- Routing decision status.
-- Database-generated timestamp.
-
-These records provide a foundation for future operational reporting and analytics.
-
-### Automated Testing
-
-Go unit tests validate request handling and input requirements, including missing or whitespace-only call identifiers and destinations.
-
-The application has also been manually validated against the live Neon PostgreSQL database to verify route retrieval and persistent call-record insertion.
-
-## System Architecture
+## Architecture
 
 ```text
-                 HTTP Client
-                      |
-                      | POST /route
-                      v
-             +------------------+
-             |    Go REST API   |
-             |    net/http      |
-             +------------------+
-                      |
-                      v
-             +------------------+
-             |  Routing Engine  |
-             |                  |
-             | Input Validation |
-             | Region Matching  |
-             | Fallback Routing |
-             +------------------+
-                      |
-                      | SQL SELECT
-                      v
-             +------------------+
-             | Neon PostgreSQL  |
-             |    sip_routes    |
-             +------------------+
-                      |
-                      | Selected SIP URI
-                      v
-             +------------------+
-             | Call Record      |
-             | Repository       |
-             +------------------+
-                      |
-                      | SQL INSERT
-                      v
-             +------------------+
-             | Neon PostgreSQL  |
-             |   call_records   |
-             +------------------+
-                      |
-                      v
-                JSON Response
+                        API clients / demo requests
+                                  |
+                 +----------------+----------------+
+                 |                                 |
+          POST /route                        GET /analytics/*
+          GET /health                         GET /health
+                 |                                 |
+         +-------v--------+                +-------v---------+
+         | Go Routing API |                | Python FastAPI  |
+         |     :8080      |                | Analytics :8000 |
+         +-------+--------+                +--------+--------+
+                 |                                  |
+                 +---------------+------------------+
+                                 |
+                         TLS PostgreSQL
+                                 |
+                       +---------v---------+
+                       |  Neon PostgreSQL  |
+                       |    sip_routes     |
+                       |    call_records   |
+                       +-------------------+
+
+      AWS ECS Fargate task: both application containers (Linux/ARM64)
+      Images: Amazon ECR | Secrets: AWS Secrets Manager
+      Logs: CloudWatch   | Diagnostics: ECS Exec
 ```
 
-The Go API runs locally during development, while PostgreSQL is hosted in the cloud. The service is designed to support future containerization and deployment.
+The two APIs are independently implemented services sharing the same database. In AWS they run as two containers within one Fargate task. The deployment is currently intended for controlled demonstrations and troubleshooting, **not as a publicly exposed production service**.
 
-## Project Structure
+### Routing flow
 
-```text
-SIP-Routing-Flow/
-├── main.go
-├── go.mod
-├── go.sum
-├── README.md
-├── .gitignore
-├── .env.example
-└── internal/
-    ├── database/
-    │   ├── postgres.go
-    │   └── call_records.go
-    └── routing/
-        ├── router.go
-        └── router_test.go
-```
+1. A client submits a JSON request to `POST /route`.
+2. The Go API validates the request and looks up an enabled region-specific route.
+3. If no matching region route is found, it attempts the configured `DEFAULT` route.
+4. The selected route and request metadata are persisted to `call_records`.
+5. The API returns the routing decision as JSON.
+6. The Python analytics API reads persisted records to report routing activity.
 
-### Component Responsibilities
+## API reference
 
-**main.go**
+### Go routing API — port 8080
 
-Initializes environment configuration, establishes database connectivity, registers HTTP endpoints, and coordinates routing requests and persistence.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | HTTP service health |
+| POST | `/route` | Select a SIP destination and record the decision |
 
-**internal/database/postgres.go**
-
-Creates and verifies the PostgreSQL connection pool.
-
-**internal/database/call_records.go**
-
-Implements the repository responsible for inserting routing decisions into PostgreSQL.
-
-**internal/routing/router.go**
-
-Contains request validation, region-based route selection, PostgreSQL lookup logic, and fallback routing behavior.
-
-**internal/routing/router_test.go**
-
-Contains automated tests for request validation and error conditions.
-
-## API Reference
-
-### GET /health
-
-Returns the operational status of the Go HTTP service.
-
-**Example request**
-
-```bash
-curl http://localhost:8080/health
-```
-
-**Example response**
-
-```json
-{
-  "status": "healthy",
-  "service": "sip-routing-flow"
-}
-```
-
-This endpoint checks the application's HTTP availability. It does not continuously verify PostgreSQL connectivity.
-
-### POST /route
-
-Processes a routing request, retrieves a SIP destination from PostgreSQL, records the routing decision, and returns the result.
-
-**Example request**
+**Example routing request**
 
 ```bash
 curl -X POST http://localhost:8080/route \
-  -H "Content-Type: application/json" \
+  -H 'Content-Type: application/json' \
   -d '{
     "call_id": "CALL-1001",
     "caller": "+14045550123",
@@ -200,7 +93,7 @@ curl -X POST http://localhost:8080/route \
   }'
 ```
 
-**Example response**
+**Example response** (depends on configured routes)
 
 ```json
 {
@@ -210,133 +103,47 @@ curl -X POST http://localhost:8080/route \
 }
 ```
 
-The returned route depends on the current database configuration.
+The Go API distinguishes invalid requests, unavailable routes, and database/persistence failures with appropriate HTTP errors. Its `/health` endpoint checks HTTP availability, not end-to-end PostgreSQL health.
 
-### HTTP Response Codes
+### Python analytics API — port 8000
 
-| Code | Meaning |
-|---|---|
-| 200 | Routing destination successfully selected |
-| 400 | Invalid JSON or missing required fields |
-| 404 | No enabled matching or fallback route |
-| 405 | Unsupported HTTP method |
-| 503 | Database routing or persistence operation unavailable |
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | HTTP service health |
+| GET | `/analytics/summary` | Aggregate routing activity |
+| GET | `/analytics/regions` | Routing activity grouped by region |
+| GET | `/analytics/recent` | Recent routing decisions |
 
-## Database Schema
-
-The application uses two PostgreSQL tables.
-
-### sip_routes
-
-Stores configured SIP routing destinations.
-
-```sql
-CREATE TABLE sip_routes (
-    id BIGSERIAL PRIMARY KEY,
-    region VARCHAR(20) NOT NULL UNIQUE,
-    sip_uri VARCHAR(255) NOT NULL,
-    priority INTEGER NOT NULL DEFAULT 1,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/analytics/summary
+curl http://localhost:8000/analytics/regions
+curl http://localhost:8000/analytics/recent
 ```
 
-### call_records
+Analytics responses reflect the records currently stored in PostgreSQL.
 
-Stores the results of routing decisions.
+## Database design
 
-```sql
-CREATE TABLE call_records (
-    id BIGSERIAL PRIMARY KEY,
-    call_id VARCHAR(100) NOT NULL,
-    caller VARCHAR(50),
-    destination VARCHAR(50) NOT NULL,
-    region VARCHAR(20),
-    selected_route VARCHAR(255),
-    routing_status VARCHAR(30) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
+Two tables support routing and reporting:
 
-**Example route configuration**
+- **`sip_routes`:** `id`, `region`, `sip_uri`, `priority`, `enabled`, `created_at`. Region is currently unique, so the `priority` field is reserved for potential multi-gateway support.
+- **`call_records`:** `id`, `call_id`, `caller`, `destination`, `region`, `selected_route`, `routing_status`, `created_at`.
+
+**Illustrative route configuration:**
 
 ```sql
 INSERT INTO sip_routes (region, sip_uri, enabled)
 VALUES
-    ('US', 'sip:us-gateway@pbx.internal', TRUE),
-    ('EU', 'sip:eu-gateway@pbx.internal', TRUE),
-    ('DEFAULT', 'sip:default@pbx.internal', TRUE)
+  ('US', 'sip:us-gateway@pbx.internal', TRUE),
+  ('EU', 'sip:eu-gateway@pbx.internal', TRUE),
+  ('DEFAULT', 'sip:default@pbx.internal', TRUE)
 ON CONFLICT (region) DO NOTHING;
 ```
 
-The `.internal` addresses are demonstration placeholders and do not represent publicly reachable SIP gateways.
+The `.internal` SIP URIs are demonstration values, not live gateways.
 
-## Getting Started
-
-### Prerequisites
-
-- Go installed locally.
-- Access to a PostgreSQL database (Neon recommended).
-- Git.
-- A terminal or IDE.
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/Shannon-Reed/SIP-Routing-Flow.git
-cd SIP-Routing-Flow
-```
-
-### 2. Install Dependencies
-
-```bash
-go mod download
-```
-
-### 3. Configure PostgreSQL
-
-Create a Neon PostgreSQL project at https://console.neon.tech/ or use an existing compatible PostgreSQL instance.
-
-Create the `sip_routes` and `call_records` tables using the SQL definitions above.
-
-### 4. Configure Environment Variables
-
-Create a `.env` file in the project root:
-
-```dotenv
-DATABASE_URL=postgresql://username:password@hostname/database?sslmode=require
-PORT=8080
-```
-
-Replace the placeholder URL with your PostgreSQL connection string.
-
-**Security:** Never commit your `.env` file or database credentials to source control.
-
-### 5. Run the Application
-
-```bash
-go run .
-```
-
-The API listens on:
-
-```text
-http://localhost:8080
-```
-
-### 6. Run Automated Tests
-
-```bash
-go test ./... -v
-```
-
-Tests can be executed without a live PostgreSQL connection for the currently implemented input-validation scenarios.
-
-## Verifying Dynamic Routing
-
-One of the project's primary features is the ability to update routing configuration without restarting the application.
-
-For example, execute the following SQL in Neon:
+A route can be updated without rebuilding the API:
 
 ```sql
 UPDATE sip_routes
@@ -344,76 +151,107 @@ SET sip_uri = 'sip:us-backup@pbx.internal'
 WHERE region = 'US';
 ```
 
-Send another request to `POST /route` with `"region": "US"`.
+## Run locally
 
-The API will return the updated SIP URI using the existing running Go service.
+### Prerequisites
 
-This demonstrates database-driven configuration and separation of application logic from operational routing data.
+- Docker with Docker Compose
+- A PostgreSQL database with the `sip_routes` and `call_records` tables configured
+- A valid database connection string
 
-## Engineering Considerations
+### Docker Compose (both APIs)
 
-The project incorporates several backend engineering practices:
+```bash
+git clone https://github.com/Shannon-Reed/SIP-Routing-Flow.git
+cd SIP-Routing-Flow
+```
 
-- **Separation of concerns:** HTTP request handling, routing logic, and database persistence are organized into distinct packages.
-- **Connection management:** PostgreSQL connection pooling reduces the overhead of establishing new connections for every request.
-- **Query safety:** Parameterized SQL queries keep input values separate from SQL statements.
-- **Request cancellation:** Context propagation allows database operations to respect HTTP request deadlines.
-- **Persistence reliability:** Routing decisions are written to PostgreSQL before successful API responses are returned.
-- **Error handling:** The API distinguishes invalid requests, unavailable routes, and service failures.
-- **Cloud configuration:** Database credentials are managed through environment variables rather than embedded in source code.
+Create a local `.env` file (do not commit it):
 
-## Current Limitations
+```dotenv
+DATABASE_URL=postgresql://USERNAME:PASSWORD@HOST/DATABASE?sslmode=require
+```
 
-This project currently focuses on routing decisions and database persistence.
+Start the services:
 
-It does not yet implement:
+```bash
+docker compose up --build -d
+docker compose ps
+```
 
-- SIP INVITE processing or actual call establishment.
-- Real-time SIP gateway health checks.
-- Automatic failover based on live gateway availability.
-- Authentication or rate limiting for public API access.
-- Idempotent request handling.
-- Full database integration-test coverage.
-- Completed-call reporting or call-detail records.
+Verify both APIs:
 
-The database schema includes a priority field for future multi-gateway routing, but the current implementation permits only one configured route per region.
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8000/health
+curl http://localhost:8000/analytics/summary
+```
 
-## Planned Enhancements
+Stop the local containers:
 
-### Python Analytics Microservice
+```bash
+docker compose down
+```
 
-Build a separate FastAPI service that connects to PostgreSQL and provides endpoints for:
+### Run the Go API without Docker
 
-- Total routing requests.
-- Routing distribution by region.
-- Successful versus unsuccessful route-selection attempts.
-- Recent routing activity.
-- Historical reporting.
+With Go installed and `DATABASE_URL` configured:
 
-### Containerization and Deployment
+```bash
+go mod download
+go run .
+```
 
-- Create Dockerfiles for backend services.
-- Configure local multi-service development using Docker Compose.
-- Deploy the Go API to a cloud hosting platform.
-- Add application readiness and database health checks.
+### Tests
 
-### Advanced Routing
+```bash
+go test ./... -v
+```
 
-- Support multiple SIP gateways per region.
-- Introduce routing priority and failover.
-- Add gateway availability monitoring.
-- Implement configurable routing policies.
-- Explore SIP signaling integration.
+The repository also includes Python tests; run them from the analytics environment using its configured test dependencies.
 
-## Project Purpose
+## AWS deployment (implemented and verified)
 
-SIP Routing Flow was developed as a practical exploration of Go backend development and cloud-based telecommunications architecture.
+The current AWS deployment uses:
 
-The project applies concepts from VoIP and call-routing systems to a modern backend implementation, with an emphasis on modularity, maintainability, cloud data persistence, and extensibility.
+- **Amazon ECR:** Separate repositories for the Go routing and Python analytics container images.
+- **Amazon ECS Fargate:** One Linux/ARM64 task definition with two essential application containers.
+- **AWS Secrets Manager:** Stores the Neon `DATABASE_URL`, injected into each container at startup.
+- **IAM:** Separate task execution and task roles, with scoped permissions for image pulls, secrets, logging, and ECS Exec.
+- **Amazon CloudWatch Logs:** Dedicated log groups for both services.
+- **ECS container health checks:** Each container periodically requests its local `/health` endpoint; both have reported `HEALTHY`.
+- **ECS Exec:** Used to securely access the containers and verify API endpoints and database-backed analytics without enabling public inbound access.
 
-It serves as a foundation for further development involving Python analytics, containerized services, and more advanced telecommunications routing behavior.
+**Deployment status:** Images have been pushed to ECR, both applications have started on Fargate, logs are available in CloudWatch, health checks report healthy, and the API endpoints have been tested from within the ECS task.
 
+This is currently a **manually launched standalone ECS task**. It does not yet use an ECS service, public HTTPS load balancer, or automated GitHub Actions deployment. A standalone task is not automatically replaced when it fails. The task can be stopped between demonstrations to limit compute costs.
 
-**Author:** Shannon Reed
+## Engineering decisions
 
+- **Go for the routing path:** A small HTTP service with explicit validation and database access.
+- **Python for analytics:** A separate FastAPI application for reporting-oriented endpoints.
+- **Database-backed configuration:** Routing destinations can change independently of application builds.
+- **Parameterized queries and connection pooling:** Support safer, reusable PostgreSQL access.
+- **Separation of application concerns:** Routing logic, database access, and analytics live in distinct components.
+- **Managed secrets:** Database credentials are supplied at runtime, not committed to Git or baked into images.
+- **Private-first deployment:** API validation uses ECS Exec rather than exposing unauthenticated endpoints publicly.
+
+## Limitations and potential enhancements
+
+The project does **not** currently include:
+
+- Live SIP signaling (`INVITE`, `REGISTER`, etc.), RTP/media, or call establishment.
+- Real-time SIP gateway probing or availability-based failover.
+- Multiple gateways per region with priority-based selection.
+- Public API authentication, rate limiting, or a production HTTPS endpoint.
+- An ECS service for automatic task replacement or a CI/CD deployment pipeline.
+- Comprehensive integration testing against all failure conditions.
+
+Possible future improvements include GitHub Actions CI/CD, ECS service management, HTTPS ingress, richer routing policies, and gateway availability monitoring.
+
+## Project purpose
+
+This project brings together telecommunications routing concepts and modern backend engineering: Go service development, Python APIs, relational data modeling, containerization, cloud deployment, access control, and operational diagnostics.
+
+**Author:** Shannon Reed  
 **Repository:** https://github.com/Shannon-Reed/SIP-Routing-Flow
