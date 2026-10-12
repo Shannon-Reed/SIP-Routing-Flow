@@ -8,6 +8,12 @@ Both applications are containerized with Docker and have been deployed together 
 
 > **Scope:** This is a routing **decision** service, not a SIP proxy or PBX. It returns SIP destination URIs; it does not exchange SIP signaling, establish voice sessions, or confirm call completion.
 
+
+## Project purpose
+
+This project brings together telecommunications routing concepts and modern backend engineering: Go service development, Python APIs, relational data modeling, containerization, cloud deployment, access control, and operational diagnostics.
+s
+
 ## At a glance
 
 | Component | Technology | Responsibility |
@@ -249,9 +255,21 @@ The project does **not** currently include:
 
 Possible future improvements include GitHub Actions CI/CD, ECS service management, HTTPS ingress, richer routing policies, and gateway availability monitoring.
 
-## Project purpose
 
-This project brings together telecommunications routing concepts and modern backend engineering: Go service development, Python APIs, relational data modeling, containerization, cloud deployment, access control, and operational diagnostics.
+### Quick Demo
+
+Start both services and run the interactive terminal demonstration:
+
+```bash
+docker compose up -d
+chmod +x demo.sh
+./demo.sh
+```
+
+The script verifies both services, demonstrates region-specific routing and DEFAULT fallback behavior, and displays analytics before and after the requests.
+
+The demo requires configured PostgreSQL routes and a valid local database connection.
+
 
 **Author:** Shannon Reed  
 **Repository:** https://github.com/Shannon-Reed/SIP-Routing-Flow
