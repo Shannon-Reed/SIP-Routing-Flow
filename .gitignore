@@ -13,7 +13,12 @@ coverage.out
 # Local configuration and secrets
 .env
 .env.*
-!.env.example 
+!.env.example
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 
 # IDE files
 .vscode/
