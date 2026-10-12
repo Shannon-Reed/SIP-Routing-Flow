@@ -40,6 +40,7 @@ func main() {
 	log.Println("Successfully connected to Neon PostgreSQL")
 
 	router := routing.NewRouter(db)
+	callRecordRepo := database.NewCallRecordRepository(db)
 	mux := http.NewServeMux()
 
 	// Health check
@@ -92,14 +93,43 @@ func main() {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		record := database.CallRecord{
+			CallID:        call.CallID,
+			Caller:        call.Caller,
+			Destination:   call.Destination,
+			Region:        call.Region,
+			SelectedRoute: response.Route,
+			RoutingStatus: response.Status,
+		}
 
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			log.Printf("Failed to encode response: %v", err)
+		if err := callRecordRepo.Save(ctx, record); err != nil {
+			log.Printf(
+				"ERROR: Failed to persist routing decision for call %s: %v",
+				call.CallID,
+				err,
+			)
+
+			http.Error(
+				w,
+				"ERROR: Unable to persist routing decision",
+				http.StatusServiceUnavailable,
+			)
 			return
 		}
 
-		log.Printf("Call %s routed to %s", call.CallID, response.Route)
+		// Return the API Response
+		w.Header().Set("Content-Type", "application/json")
+
+		if response.Status == "NO_ROUTE" {
+			w.WriteHeader(http.StatusNotFound)
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("ERROR: Failed to encode response: %v", err)
+			return
+		}
+
+		log.Printf("Call %s: %s -> %s", call.CallID, response.Status, response.Route)
 	})
 
 	server := &http.Server{

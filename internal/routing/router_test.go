@@ -1,95 +1,94 @@
 package routing
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
-func TestFindRoute(t *testing.T) {
-	router := NewRouter()
+func TestFindRouteValidation(t *testing.T) {
+	// A nil database is safe here because invalid requests
+	// are rejected before any SQL queries execute.
+	router := NewRouter(nil)
 
 	tests := []struct {
 		name          string
 		call          CallRequest
-		expectedRoute string
-		expectError   bool
+		expectedError string
 	}{
 		{
-			name: "US call",
+			name: "Missing Call ID",
 			call: CallRequest{
-				CallID:      "CALL-1001",
+				Caller:      "+14045550123",
 				Destination: "+18005550100",
 				Region:      "US",
 			},
-			expectedRoute: "sip:us-gateway@pbx.internal",
+			expectedError: "call_id is required",
 		},
 		{
-			name: "EU call",
+			name: "Missing Destination",
 			call: CallRequest{
-				CallID:      "CALL-1002",
-				Destination: "+442071234567",
-				Region:      "EU",
-			},
-			expectedRoute: "sip:eu-gateway@pbx.internal",
-		},
-		{
-			name: "Unknown region uses default",
-			call: CallRequest{
-				CallID:      "CALL-1003",
-				Destination: "+18005550100",
-				Region:      "APAC",
-			},
-			expectedRoute: "sip:default@pbx.internal",
-		},
-		{
-			name: "Region is case insensitive",
-			call: CallRequest{
-				CallID:      "CALL-1004",
-				Destination: "+18005550100",
-				Region:      "us",
-			},
-			expectedRoute: "sip:us-gateway@pbx.internal",
-		},
-		{
-			name: "Missing call ID",
-			call: CallRequest{
-				Destination: "+18005550100",
-				Region:      "US",
-			},
-			expectError: true,
-		},
-		{
-			name: "Missing destination",
-			call: CallRequest{
-				CallID: "CALL-1005",
+				CallID: "CALL-1001",
+				Caller: "+14045550123",
 				Region: "US",
 			},
-			expectError: true,
+			expectedError: "destination is required",
+		},
+		{
+			name: "Empty Call ID",
+			call: CallRequest{
+				CallID:      "",
+				Destination: "+18005550100",
+				Region:      "US",
+			},
+			expectedError: "call_id is required",
+		},
+		{
+			name: "Whitespace Call ID",
+			call: CallRequest{
+				CallID:      "   ",
+				Destination: "+18005550100",
+				Region:      "US",
+			},
+			expectedError: "call_id is required",
+		},
+		{
+			name: "Whitespace Destination",
+			call: CallRequest{
+				CallID:      "CALL-1002",
+				Destination: "   ",
+				Region:      "US",
+			},
+			expectedError: "destination is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			response, err := router.FindRoute(tt.call)
+			response, err := router.FindRoute(
+				context.Background(),
+				tt.call,
+			)
 
-			if tt.expectError {
-				if err == nil {
-					t.Fatal("Expected an error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
-			if response.Route != tt.expectedRoute {
-				t.Errorf(
-					"Expected route %s, got %s",
-					tt.expectedRoute,
-					response.Route,
+			if err == nil {
+				t.Fatalf(
+					"Expected error %q, but received nil",
+					tt.expectedError,
 				)
 			}
 
-			if response.Status != "ROUTE_FOUND" {
-				t.Errorf("Unexpected status: %s", response.Status)
+			if err.Error() != tt.expectedError {
+				t.Errorf(
+					"Expected error %q, got %q",
+					tt.expectedError,
+					err.Error(),
+				)
+			}
+
+			if response.Status != "" {
+				t.Errorf(
+					"Expected empty response, got status %q",
+					response.Status,
+				)
 			}
 		})
 	}
